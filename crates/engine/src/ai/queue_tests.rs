@@ -81,3 +81,35 @@ fn completion_cancellation_timeout_and_recovery() {
         Err(AiError::Cancelled)
     ));
 }
+
+#[test]
+fn inpainting_submits_both_image_fields_and_keeps_original_mask() {
+    let mut w = crate::ai_cmds::tests::workflow();
+    w.modes.push(Mode::Inpaint);
+    for key in ["reference", "mask"] {
+        w.graph["nodes"]["out"][key] = json!({"image_name":"placeholder.png"});
+        w.bindings.insert(key.into(), vec![format!("/nodes/out/{key}")]);
+    }
+    w.mask_semantics = Some(workflow::MaskSemantics::WhiteRepaints);
+    let mut d = photocraft_doc::Document::with_background(
+        "test",
+        photocraft_doc::Size::new(32, 32),
+        photocraft_color::ColorMode::Rgb,
+        photocraft_color::SampleType::U8,
+        photocraft_color::Color::rgb(0.5, 0.5, 0.5),
+    );
+    let mut mask = photocraft_raster::Surface::new(photocraft_color::PixelFormat::GRAY8);
+    mask.fill_rect(photocraft_geom::Rect::from_xywh(10, 10, 8, 8), &[1.0]);
+    d.selection = Some(mask);
+    let r = Request { mode: Mode::Inpaint, prompt: "test".into(), ..Default::default() };
+    let prepared = images::prepare(&d, 1, d.top_layer(), &r, &w, 0).unwrap();
+    let original = prepared.placement.mask.clone();
+    assert!(prepared.mask.is_some());
+    assert!(prepared.reference.is_some());
+    let mut mock = Mock::new();
+    let flag = AtomicBool::new(false);
+    let result = generate(&mut mock, prepared, &w, &r, 1, 5, &flag, |_, _| {}).unwrap();
+    assert_eq!(result.metadata["parameters"]["reference"]["image_name"], "ref.png");
+    assert_eq!(result.metadata["parameters"]["mask"]["image_name"], "ref.png");
+    assert_eq!(result.placement.mask, original);
+}

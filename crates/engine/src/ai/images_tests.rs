@@ -96,3 +96,30 @@ fn default_selection_mapping_resize_and_merged_without_flattening() {
     d.selection = Some(mask);
     assert!(prepare(&d, 1, d.top_layer(), &request, &workflow(), 0).is_err());
 }
+
+#[test]
+fn true_inpainting_mask_semantics_and_reference_share_crop_space() {
+    use super::workflow::MaskSemantics;
+    let mut d = document();
+    let mut selection = Surface::new(PixelFormat { sample: SampleType::F32, ..PixelFormat::GRAY8 });
+    selection.write_pixel(35, 25, &[0.25]);
+    selection.write_pixel(44, 34, &[1.0]);
+    d.selection = Some(selection);
+    let mut w = workflow();
+    w.modes.push(Mode::Inpaint);
+    w.graph["nodes"]["out"]["mask"] = serde_json::json!({"image_name":"mask.png"});
+    w.bindings.insert("mask".into(), vec!["/nodes/out/mask".into()]);
+    let request = Request { mode: Mode::Inpaint, prompt: "test".into(), ..Default::default() };
+    assert!(prepare(&d, 1, d.top_layer(), &request, &w, 5).is_err());
+    for semantics in [MaskSemantics::WhiteRepaints, MaskSemantics::BlackRepaints, MaskSemantics::TransparentRepaints] {
+        w.mask_semantics = Some(semantics);
+        let p = prepare(&d, 1, d.top_layer(), &request, &w, 5).unwrap();
+        let reference = decode_result(p.reference.as_ref().unwrap()).unwrap();
+        let mask = photocraft_codecs::decode(p.mask.as_ref().unwrap()).unwrap();
+        assert_eq!(reference.dimensions(), mask.dimensions());
+        let channel = if semantics == MaskSemantics::TransparentRepaints { 3 } else { 0 };
+        let expected = if semantics == MaskSemantics::WhiteRepaints { 0.25 } else { 0.75 };
+        assert!((mask.get(5, 5, channel) - expected).abs() < 1.0 / 255.0);
+        assert_eq!(p.placement.mask.unwrap().sample_channel(35, 25, 0), 0.25);
+    }
+}

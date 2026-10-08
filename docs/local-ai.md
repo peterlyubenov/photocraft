@@ -110,3 +110,20 @@ Accept with `maskEnabled:false` to inspect the whole candidate crop, then enable
 using the existing Layers panel and painting tools. Undo/redo applies to each acceptance and mask
 edit. If the document revision changed, acceptance requires an explicit `allowStale:true` review;
 changing canvas dimensions, mode, depth or ICC profile blocks acceptance entirely.
+
+## Stable Diffusion inpainting
+
+Use a tested local Stable Diffusion inpainting executable graph with `reference` and `mask`
+bindings, `"modes":["inpaint"]`, and an explicit `maskSemantics`:
+
+- `whiteRepaints`: selection coverage is exported as grayscale white=repaint, black=retain.
+- `blackRepaints`: inverted grayscale coverage, black=repaint, white=retain.
+- `transparentRepaints`: RGBA white with alpha=1−coverage, transparent=repaint.
+
+These are template declarations, not guesses about a node's implementation. Verify the chosen
+workflow's actual semantics in your installed InvokeAI `/docs` and a small known mask example.
+Both reference and mask use the same crop and model resolution. After generation, the original
+floating-point selection mask is attached independently, preserving feathered compositing even
+when the backend mask is quantized/resized. Import a separate template for maskless FLUX.2 editing
+and for true Stable Diffusion inpainting. No compatible SD inpainting model/graph was available
+on the inspected local server, so GPU-level inpainting compatibility remains unverified.

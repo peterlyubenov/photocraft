@@ -9,7 +9,10 @@ use photocraft_geom::Rect;
 use photocraft_raster::Surface;
 use serde_json::json;
 
-use super::{AiError, AiResult, Mode, Request, Source, check_size, workflow::Workflow};
+use super::{
+    AiError, AiResult, Mode, Request, Source, check_size,
+    workflow::{MaskSemantics, Workflow},
+};
 
 #[derive(Clone, Debug)]
 pub struct Placement {
@@ -72,9 +75,6 @@ pub fn prepare(
 ) -> AiResult<Prepared> {
     request.validate(workflow)?;
     workflow.validate()?;
-    if request.mode == Mode::Inpaint {
-        return Err(AiError::Invalid("true inpainting is not implemented yet".into()));
-    }
     if matches!(request.mode, Mode::MasklessFill | Mode::Inpaint) && doc.selection.is_none() {
         return Err(AiError::Invalid("Generative Fill requires an active selection".into()));
     }
@@ -152,6 +152,13 @@ pub fn prepare(
     } else {
         None
     };
+    let mask = if request.mode == Mode::Inpaint {
+        let selection = saved_mask.as_ref().ok_or_else(|| AiError::Invalid("inpainting requires a selection".into()))?;
+        let semantics = workflow.mask_semantics.ok_or_else(|| AiError::Invalid("workflow must declare maskSemantics".into()))?;
+        Some(encode_mask(selection, rect, width, height, semantics)?)
+    } else {
+        None
+    };
     Ok(Prepared {
         placement: Placement {
             document: doc.id,
@@ -164,10 +171,37 @@ pub fn prepare(
             mask: saved_mask,
         },
         reference,
-        mask: None,
+        mask,
         width,
         height,
     })
+}
+
+/// Backend mask conventions are explicit, independent of the retained editor mask.
+pub fn encode_mask(selection: &Surface, rect: Rect, width: u32, height: u32, semantics: MaskSemantics) -> AiResult<Vec<u8>> {
+    check_size(width, height)?;
+    check_crop(rect)?;
+    let mut local = Surface::new(PixelFormat { mode: ColorMode::Grayscale, sample: SampleType::F32, alpha: false });
+    for y in 0..rect.height() {
+        let row = selection.read_region(Rect::from_xywh(rect.x0, rect.y0 + y as i32, rect.width(), 1));
+        local.write_region(Rect::from_xywh(0, y as i32, rect.width(), 1), &row);
+    }
+    let origin = Rect::from_xywh(0, 0, rect.width(), rect.height());
+    let scaled = photocraft_algo::resample::resize_surface_in_canvas(
+        &local,
+        f64::from(width) / f64::from(rect.width()),
+        f64::from(height) / f64::from(rect.height()),
+        photocraft_algo::resample::Resample::Bilinear,
+        origin,
+    );
+    let coverage = scaled.read_region(Rect::from_xywh(0, 0, width, height));
+    let (layout, values) = match semantics {
+        MaskSemantics::WhiteRepaints => (ChannelLayout::Gray, coverage),
+        MaskSemantics::BlackRepaints => (ChannelLayout::Gray, coverage.into_iter().map(|v| 1.0 - v).collect()),
+        MaskSemantics::TransparentRepaints => (ChannelLayout::Rgba, coverage.into_iter().flat_map(|v| [1.0, 1.0, 1.0, 1.0 - v]).collect()),
+    };
+    let image = Image::from_normalized(width, height, layout, photocraft_codecs::SampleType::U8, &values).map_err(|e| AiError::Backend(e.to_string()))?;
+    encode_png(&image)
 }
 
 pub fn decode_result(bytes: &[u8]) -> AiResult<Image> {
