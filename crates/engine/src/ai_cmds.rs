@@ -10,7 +10,11 @@ fn bad(message: impl Into<String>) -> EngineError {
     EngineError::Other(message.into())
 }
 fn doc(s: &Session) -> std::result::Result<(), String> {
-    s.active().map(|_| ()).ok_or_else(|| "no document open".into())
+    let st = s.active().ok_or_else(|| "no document open".to_string())?;
+    if st.floating.is_some() {
+        return Err("finish or cancel the floating selection before AI generation/acceptance".into());
+    }
+    Ok(())
 }
 fn id(p: &Value) -> Result<u64> {
     p.get("id").and_then(Value::as_u64).ok_or_else(|| bad("candidate id is required"))
@@ -91,6 +95,10 @@ fn accept(s: &mut Session, p: &Value) -> Result<Value> {
         Ok(())
     })?;
     s.ai.candidates.remove(index);
+    if let Some(st) = s.active() {
+        let (document, revision) = (st.doc.id, st.revision);
+        s.ai.accepted_revision(document, revision);
+    }
     Ok(json!({"layer": layer_id.0}))
 }
 
@@ -98,7 +106,7 @@ pub fn specs() -> Vec<CommandSpec> {
     [
         ("ai.configure", "Configure Local AI", "{settings?:{serverUrl,requestTimeoutSecs,jobTimeoutSecs,contextPadding,workflows,selectedWorkflow},token?:string}", always as fn(&Session) -> _, configure as fn(&mut Session, &Value) -> _, false),
         ("ai.connect", "Test InvokeAI Connection", "{}", always, connect, false),
-        ("ai.generate", "Generate Local AI Image", "{prompt:string,mode:generate|edit|masklessFill|inpaint,source:activeLayer|mergedVisible,width:integer,height:integer,seed?:u32,steps?:u32,guidance?:number,strength?:number,count?:1}", doc, generate, false),
+        ("ai.generate", "Generate Local AI Image", "{prompt:string,mode:generate|edit|masklessFill|inpaint,source:activeLayer|mergedVisible,width:integer,height:integer,seed?:u32,steps?:u32,guidance?:number,strength?:number,count?:1..16=1}", doc, generate, false),
         ("ai.status", "Local AI Queue and Candidates", "{}", always, status, false),
         ("ai.cancel", "Cancel Local AI Queue", "{}", always, cancel, false),
         ("ai.discard", "Discard AI Candidate", "{id:u64}", always, discard, false),

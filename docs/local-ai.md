@@ -127,3 +127,16 @@ floating-point selection mask is attached independently, preserving feathered co
 when the backend mask is quantized/resized. Import a separate template for maskless FLUX.2 editing
 and for true Stable Diffusion inpainting. No compatible SD inpainting model/graph was available
 on the inspected local server, so GPU-level inpainting compatibility remains unverified.
+
+## Sequential queue and variations
+
+Count defaults to **1**, supports 1/2/4 and custom 1–16, and is never multiplied by graph batching.
+Reference/mask uploads are reused across sequential jobs. Candidate storage is limited to 64 MP
+total. A fixed seed increments for each variation; random mode chooses a fresh seed per item.
+Seed behavior requires a seed binding. Results arrive individually and remain temporary until
+accepted. Each acceptance is separately undoable. You may keep any subset and discard the rest.
+Cancellation stops pending items and attempts to cancel only this request's running item, without
+clearing someone else's queue. Unsupported/failed cancellation reports the item ID for manual
+stopping in InvokeAI. Late cancelled results are ignored. Connection polling never resubmits work.
+Application shutdown requests cancellation; delivery is best effort if the process exits before
+an HTTP call finishes. Check InvokeAI's queue after forced termination or an ambiguous timeout.

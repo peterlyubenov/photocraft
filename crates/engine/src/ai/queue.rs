@@ -54,6 +54,8 @@ pub struct Generation {
     worker: Option<Worker>,
     #[cfg(not(target_arch = "wasm32"))]
     next_id: u64,
+    request_document: Option<photocraft_doc::DocId>,
+    expected_revision: Option<u64>,
 }
 impl Drop for Generation {
     fn drop(&mut self) {
@@ -75,7 +77,13 @@ impl Generation {
                         self.status.message = message;
                         self.status.remote_item = item;
                     }
-                    Ok(Event::Candidate(candidate)) => {
+                    Ok(Event::Candidate(mut candidate)) => {
+                        if worker.cancel.load(Ordering::Relaxed) {
+                            continue;
+                        }
+                        if self.request_document == Some(candidate.placement.document) {
+                            candidate.placement.revision = self.expected_revision.unwrap_or(candidate.placement.revision);
+                        }
                         self.candidates.push(*candidate);
                         self.status.completed += 1;
                     }
@@ -106,6 +114,17 @@ impl Generation {
             self.worker = None;
             self.status.running = false;
             self.status.remote_item = None;
+        }
+    }
+    /// Each own acceptance advances the common request revision, including results still arriving.
+    pub fn accepted_revision(&mut self, document: photocraft_doc::DocId, revision: u64) {
+        if self.request_document == Some(document) {
+            self.expected_revision = Some(revision);
+        }
+        for candidate in &mut self.candidates {
+            if candidate.placement.document == document {
+                candidate.placement.revision = revision;
+            }
         }
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -146,24 +165,29 @@ impl Generation {
             .cloned()
             .ok_or_else(|| AiError::Invalid("import and select an executable workflow template first".into()))?;
         request.validate(&workflow)?;
-        if request.count.unwrap_or(1) != 1 {
-            return Err(AiError::Invalid("this milestone supports one generation".into()));
-        }
+        let count = request.count.unwrap_or(1);
         let token = self.token.clone();
-        self.next_id = self.next_id.checked_add(1).ok_or_else(|| AiError::Invalid("request identifier exhausted; restart PhotoCraft".into()))?;
-        let id = self.next_id;
-        self.spawn("Preparing request", 1, move |send, cancel| {
+        self.next_id = self.next_id.checked_add(u64::from(count)).ok_or_else(|| AiError::Invalid("request identifier exhausted; restart PhotoCraft".into()))?;
+        let id = self.next_id - u64::from(count) + 1;
+        self.request_document = Some(doc.id);
+        self.expected_revision = Some(revision);
+        self.spawn("Preparing request", count, move |send, cancel| {
             let prepared = super::images::prepare(&doc, revision, active, &request, &workflow, settings.context_padding)?;
             let mut backend = super::invoke::InvokeClient::new(&settings, token)?;
             backend.health()?;
-            let candidate = generate(&mut backend, prepared, &workflow, &request, id, settings.job_timeout_secs, &cancel, |message, item| {
-                let _ = send.send(Event::Message(message, item));
-            })?;
-            if cancel.load(Ordering::Relaxed) {
-                return Err(AiError::Cancelled);
-            }
-            send.send(Event::Candidate(Box::new(candidate))).map_err(|_| AiError::Cancelled)?;
-            Ok(())
+            generate_sequence(
+                &mut backend,
+                prepared,
+                &workflow,
+                &request,
+                id,
+                settings.job_timeout_secs,
+                &cancel,
+                |message, item| {
+                    let _ = send.send(Event::Message(message, item));
+                },
+                |candidate| send.send(Event::Candidate(Box::new(candidate))).map_err(|_| AiError::Cancelled),
+            )
         })
     }
     #[cfg(target_arch = "wasm32")]
@@ -194,6 +218,57 @@ impl Generation {
         self.worker = Some(Worker { receiver, cancel });
         Ok(())
     }
+}
+
+/// Upload context once and run exactly the requested number, sequentially. Deliver as each completes.
+#[allow(clippy::too_many_arguments)]
+pub fn generate_sequence(
+    backend: &mut dyn Backend,
+    mut prepared: Prepared,
+    workflow: &Workflow,
+    request: &Request,
+    first_id: u64,
+    timeout_secs: u64,
+    cancel: &AtomicBool,
+    mut progress: impl FnMut(String, Option<u64>),
+    mut emit: impl FnMut(Candidate) -> AiResult<()>,
+) -> AiResult<()> {
+    let count = request.count.unwrap_or(1);
+    request.validate(workflow)?;
+    if u64::from(prepared.width) * u64::from(prepared.height) * u64::from(count) > 67_108_864 {
+        return Err(AiError::Invalid("candidate queue exceeds 64 MP total; reduce resolution or count".into()));
+    }
+    if cancel.load(Ordering::Relaxed) {
+        return Err(AiError::Cancelled);
+    }
+    backend.validate_graph(workflow)?;
+    let mut images = BTreeMap::new();
+    if let Some(png) = prepared.reference.take() {
+        images.insert("reference".into(), json!({"image_name":backend.upload(png,false)?}));
+    }
+    if cancel.load(Ordering::Relaxed) {
+        return Err(AiError::Cancelled);
+    }
+    if let Some(png) = prepared.mask.take() {
+        images.insert("mask".into(), json!({"image_name":backend.upload(png,true)?}));
+    }
+    let workflow = Workflow { graph: workflow.bind(&images)?, ..workflow.clone() };
+    for n in 0..count {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(AiError::Cancelled);
+        }
+        let id = first_id.checked_add(u64::from(n)).ok_or_else(|| AiError::Invalid("candidate identifier overflow".into()))?;
+        let mut variation = request.clone();
+        variation.seed = request.seed.map(|v| v.wrapping_add(n));
+        let candidate = generate(backend, prepared.clone(), &workflow, &variation, id, timeout_secs, cancel, |message, item| {
+            progress(format!("{}/{}: {message}", n + 1, count), item)
+        })?;
+        if cancel.load(Ordering::Relaxed) {
+            return Err(AiError::Cancelled);
+        }
+        emit(candidate)?;
+    }
+    Ok(())
 }
 
 /// One backend item. Cancellation is checked before every submission, poll and result delivery.
@@ -238,7 +313,7 @@ pub fn generate(
     let bound = Workflow { graph: graph.clone(), ..workflow.clone() };
     backend.validate_graph(&bound)?;
     progress("Submitting one generation".into(), None);
-    let job = backend.submit(graph)?;
+    let job = backend.submit(graph.clone())?;
     let started = Instant::now();
     let result = (|| {
         loop {
@@ -264,7 +339,7 @@ pub fn generate(
                         id,
                         placement: prepared.placement,
                         image,
-                        metadata: json!({"prompt": request.prompt, "seed": seed, "workflow": workflow.name, "request": request, "parameters": values, "remoteItem": job}),
+                        metadata: json!({"prompt": request.prompt, "seed": seed, "workflow": workflow.name, "request": request, "parameters": values, "graph": graph, "remoteItem": job}),
                     });
                 }
                 JobStatus::Failed(reason) => return Err(AiError::Backend(reason)),
@@ -304,3 +379,7 @@ fn random_seed() -> u32 {
     }
     u32::from_le_bytes(bytes)
 }
+
+#[cfg(test)]
+#[path = "queue_runtime_tests.rs"]
+mod runtime_tests;

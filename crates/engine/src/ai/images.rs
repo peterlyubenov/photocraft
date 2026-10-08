@@ -25,6 +25,7 @@ pub struct Placement {
     pub rect: Rect,
     pub mask: Option<Surface>,
 }
+#[derive(Clone)]
 pub struct Prepared {
     pub placement: Placement,
     pub reference: Option<Vec<u8>>,

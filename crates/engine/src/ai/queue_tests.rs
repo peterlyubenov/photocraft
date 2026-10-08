@@ -113,3 +113,65 @@ fn inpainting_submits_both_image_fields_and_keeps_original_mask() {
     assert_eq!(result.metadata["parameters"]["mask"]["image_name"], "ref.png");
     assert_eq!(result.placement.mask, original);
 }
+
+#[test]
+fn sequential_counts_unique_seeds_partial_results_and_pending_cancellation() {
+    use super::queue::generate_sequence;
+    let workflow = crate::ai_cmds::tests::workflow();
+    let flag = AtomicBool::new(false);
+    for count in [1, 2, 4, 7] {
+        let request = Request { prompt: "test".into(), width: 8, height: 8, seed: Some(42), count: Some(count), ..Default::default() };
+        let mut backend = Mock::new();
+        let mut results = Vec::new();
+        generate_sequence(
+            &mut backend,
+            prepared(&request, &workflow),
+            &workflow,
+            &request,
+            10,
+            5,
+            &flag,
+            |_, _| {},
+            |candidate| {
+                results.push(candidate);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(backend.submitted, count);
+        assert_eq!(results.len(), count as usize);
+        for (n, result) in results.iter().enumerate() {
+            assert_eq!(result.metadata["seed"], 42 + n as u32);
+            assert_eq!(result.id, 10 + n as u64);
+        }
+    }
+    let request = Request { prompt: "test".into(), width: 8, height: 8, count: Some(4), ..Default::default() };
+    let mut backend = Mock::new();
+    let mut completed = 0;
+    assert!(matches!(
+        generate_sequence(
+            &mut backend,
+            prepared(&request, &workflow),
+            &workflow,
+            &request,
+            1,
+            5,
+            &flag,
+            |_, _| {},
+            |_| {
+                completed += 1;
+                flag.store(true, Ordering::Relaxed);
+                Ok(())
+            }
+        ),
+        Err(AiError::Cancelled)
+    ));
+    assert_eq!(backend.submitted, 1);
+    assert_eq!(completed, 1);
+    assert_eq!(backend.cancelled, 0);
+    for count in [0, 17, u32::MAX] {
+        let request = Request { count: Some(count), ..request.clone() };
+        assert!(request.validate(&workflow).is_err());
+    }
+    assert_eq!(Request::default().count.unwrap_or(1), 1);
+}
