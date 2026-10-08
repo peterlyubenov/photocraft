@@ -74,7 +74,8 @@ pub enum Outcome {
 /// field's value is validated before the first one is applied, so a typo, an unknown field, a
 /// bad value or a bad nested key can't reply with success while nothing — or only half of it —
 /// changed (#412).
-pub const UI_SET_FIELDS: [&str; 29] = [
+pub const UI_SET_FIELDS: [&str; 30] = [
+    "ai",
     "tool",
     "panels",
     "dock",
@@ -312,6 +313,7 @@ fn dispatch(app: &mut PhotocraftApp, ctx: &egui::Context, req: &ControlRequest) 
                     Some(t) => Tool::from_name(t).map(Some).ok_or_else(|| format!("unknown tool `{t}`"))?,
                     None => None,
                 };
+                let ai = p.get("ai").map(|value| crate::ai_ui::patch_form(&app.ui.ai, value)).transpose()?;
                 let gradient_classic = bool_field(p, "gradientClassic")?;
                 // The Eyedropper's options bar (#1649): Sample Size, Sample, Show Sampling Ring.
                 let eyedropper_size = match p.get("eyedropperSampleSize") {
@@ -431,6 +433,9 @@ fn dispatch(app: &mut PhotocraftApp, ctx: &egui::Context, req: &ControlRequest) 
                 };
 
                 // Apply (nothing below can fail).
+                if let Some(form) = ai {
+                    app.ui.ai = form;
+                }
                 if let Some(t) = tool {
                     app.ui.tool = t;
                     // Each tool keeps its own brush (#218), so switch it in before `brushSize`
@@ -923,6 +928,7 @@ pub fn inspect(app: &PhotocraftApp, ctx: &egui::Context) -> Value {
         }),
         "panels": app.ui.panels,
         "view": app.ui.view,
+        "ai": app.ui.ai,
         "views": app.ui.views,
         "dialogs": dialogs,
         "windows": app.ui.windows,
@@ -1485,6 +1491,31 @@ mod tests {
         assert_eq!(serde_json::to_value(&app.ui.panels).unwrap_or_default(), panels_before, "nothing was applied");
         // Non-numeric brushSize keeps the API's historical silent no-op (see the dispatch test).
         assert_eq!(call(&mut app, &ctx, "ui.set", json!({"brushSize": "large"}))["ok"], true);
+    }
+
+    #[test]
+    fn ui_set_ai_patch_applies_all_fields_or_none() {
+        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let ctx = egui::Context::default();
+        app.ui.ai.token = "keep-token".into();
+        let ai_before = app.ui.ai.clone();
+        let tool_before = app.ui.tool;
+        for params in [
+            json!({"ai": {"open": true, "request": {"prompt": "test"}}, "theme": "nope"}),
+            json!({"ai": {"customCount": 17}, "tool": "move"}),
+            json!({"ai": {"request": {"promtp": "typo"}}, "tool": "move"}),
+        ] {
+            let reply = call(&mut app, &ctx, "ui.set", params.clone());
+            assert_eq!(reply["ok"], false, "{params}: {reply}");
+            assert_eq!(app.ui.ai, ai_before, "rejected calls must leave the AI form unchanged");
+            assert_eq!(app.ui.tool, tool_before, "rejected calls must leave the tool unchanged");
+        }
+        let reply = call(&mut app, &ctx, "ui.set", json!({"ai": {"open": true, "request": {"prompt": "test"}}, "tool": "move"}));
+        assert_eq!(reply["ok"], true);
+        assert!(app.ui.ai.open);
+        assert_eq!(app.ui.ai.request.prompt, "test");
+        assert_eq!(app.ui.ai.token, "keep-token");
+        assert_eq!(app.ui.tool, Tool::Move);
     }
 
     #[test]

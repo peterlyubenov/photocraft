@@ -52,6 +52,50 @@ fn prepared(r: &Request, w: &workflow::Workflow) -> images::Prepared {
     images::prepare(&d, 1, None, r, w, 0).unwrap()
 }
 #[test]
+fn unbound_seed_is_not_reported_as_an_applied_generation_parameter() {
+    let mut w = crate::ai_cmds::tests::workflow();
+    w.bindings.remove("seed");
+    let r = Request { prompt: "test".into(), width: 8, height: 8, ..Default::default() };
+    let c = generate(&mut Mock::new(), prepared(&r, &w), &w, &r, 1, 5, &AtomicBool::new(false), |_, _| {}).unwrap();
+    assert!(c.metadata["seed"].is_null());
+    assert!(c.metadata["parameters"].get("seed").is_none());
+    assert_eq!(c.metadata["graph"]["nodes"]["out"]["seed"], 1);
+}
+#[test]
+fn pending_cancellation_keeps_the_current_result_and_does_not_cancel_it_remotely() {
+    use super::queue::generate_sequence;
+    let w = crate::ai_cmds::tests::workflow();
+    let r = Request { prompt: "test".into(), width: 8, height: 8, count: Some(4), ..Default::default() };
+    for before_submission in [false, true] {
+        let pending = AtomicBool::new(before_submission);
+        let mut backend = Mock::new();
+        let mut completed = 0;
+        let result = generate_sequence(
+            &mut backend,
+            prepared(&r, &w),
+            &w,
+            &r,
+            1,
+            5,
+            &AtomicBool::new(false),
+            &pending,
+            |message, _| {
+                if message.contains("Downloading result") {
+                    pending.store(true, Ordering::Relaxed);
+                }
+            },
+            |_| {
+                completed += 1;
+                Ok(())
+            },
+        );
+        assert!(matches!(result, Err(AiError::PendingCancelled)));
+        assert_eq!(completed, u32::from(!before_submission));
+        assert_eq!(backend.submitted, completed);
+        assert_eq!(backend.cancelled, 0);
+    }
+}
+#[test]
 fn completion_cancellation_timeout_and_recovery() {
     let w = crate::ai_cmds::tests::workflow();
     let r = Request { prompt: "test".into(), width: 8, height: 8, ..Default::default() };
@@ -131,6 +175,7 @@ fn sequential_counts_unique_seeds_partial_results_and_pending_cancellation() {
             10,
             5,
             &flag,
+            &AtomicBool::new(false),
             |_, _| {},
             |candidate| {
                 results.push(candidate);
@@ -157,6 +202,7 @@ fn sequential_counts_unique_seeds_partial_results_and_pending_cancellation() {
             1,
             5,
             &flag,
+            &AtomicBool::new(false),
             |_, _| {},
             |_| {
                 completed += 1;

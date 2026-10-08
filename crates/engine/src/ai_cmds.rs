@@ -53,12 +53,20 @@ fn generate(s: &mut Session, p: &Value) -> Result<Value> {
 fn status(s: &mut Session, _: &Value) -> Result<Value> {
     s.ai.tick();
     Ok(
-        json!({"queue": s.ai.status, "results": s.ai.candidates.iter().map(|c| json!({"id": c.id, "document": c.placement.document.0, "rect": c.placement.rect, "width": c.image.width(), "height": c.image.height(), "metadata": c.metadata})).collect::<Vec<_>>()}),
+        json!({"queue": s.ai.status, "results": s.ai.candidates.iter().map(|c| json!({"id": c.id, "document": c.placement.document.0, "documentClosed": c.placement.document_closed, "rect": c.placement.rect, "width": c.image.width(), "height": c.image.height(), "metadata": c.metadata})).collect::<Vec<_>>()}),
     )
 }
-fn cancel(s: &mut Session, _: &Value) -> Result<Value> {
-    s.ai.cancel();
-    Ok(json!({"cancellationRequested": true}))
+fn cancel(s: &mut Session, p: &Value) -> Result<Value> {
+    let pending_only = match p.get("pendingOnly") {
+        Some(v) => v.as_bool().ok_or_else(|| bad("pendingOnly must be a boolean"))?,
+        None => false,
+    };
+    if pending_only {
+        s.ai.cancel_pending();
+    } else {
+        s.ai.cancel();
+    }
+    Ok(json!({"cancellationRequested": true, "pendingOnly":pending_only}))
 }
 fn discard(s: &mut Session, p: &Value) -> Result<Value> {
     let id = id(p)?;
@@ -72,6 +80,9 @@ fn accept(s: &mut Session, p: &Value) -> Result<Value> {
     let candidate = s.ai.candidates.get(index).ok_or_else(|| bad("no such AI candidate"))?;
     let st = s.active().ok_or(EngineError::NoDocument)?;
     let placement = &candidate.placement;
+    if placement.document_closed {
+        return Err(bad("original document was closed; retrieve this image from InvokeAI or discard it. Reopened documents need a new request"));
+    }
     if st.doc.id != placement.document {
         return Err(bad("activate the original document before accepting this candidate"));
     }
@@ -108,7 +119,7 @@ pub fn specs() -> Vec<CommandSpec> {
         ("ai.connect", "Test InvokeAI Connection", "{}", always, connect, false),
         ("ai.generate", "Generate Local AI Image", "{prompt:string,mode:generate|edit|masklessFill|inpaint,source:activeLayer|mergedVisible,width:integer,height:integer,seed?:u32,steps?:u32,guidance?:number,strength?:number,count?:1..16=1}", doc, generate, false),
         ("ai.status", "Local AI Queue and Candidates", "{}", always, status, false),
-        ("ai.cancel", "Cancel Local AI Queue", "{}", always, cancel, false),
+        ("ai.cancel", "Cancel Local AI Queue", "{pendingOnly?:bool=false} (true lets the current submitted item finish)", always, cancel, false),
         ("ai.discard", "Discard AI Candidate", "{id:u64}", always, discard, false),
         ("ai.accept", "Accept AI Candidate as Layer", "{id:u64,allowStale?:bool=false,maskEnabled?:bool=true}", doc, accept, true),
     ].into_iter().map(|(id,label,params,enabled,run,journal)| CommandSpec { id,label,params,enabled,run,journal,menu:&[],shortcut:None }).collect()

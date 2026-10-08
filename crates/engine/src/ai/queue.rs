@@ -45,6 +45,7 @@ enum Event {
 struct Worker {
     receiver: mpsc::Receiver<Event>,
     cancel: Arc<AtomicBool>,
+    cancel_pending: Arc<AtomicBool>,
 }
 #[derive(Default)]
 pub struct Generation {
@@ -66,6 +67,11 @@ impl Generation {
     pub fn cancel(&self) {
         if let Some(worker) = &self.worker {
             worker.cancel.store(true, Ordering::Relaxed);
+        }
+    }
+    pub fn cancel_pending(&self) {
+        if let Some(worker) = &self.worker {
+            worker.cancel_pending.store(true, Ordering::Relaxed);
         }
     }
     pub fn tick(&mut self) {
@@ -116,6 +122,17 @@ impl Generation {
             self.status.remote_item = None;
         }
     }
+    /// Persisted document IDs can be reused after closing/reopening: invalidate that request.
+    pub fn document_closed(&mut self, document: photocraft_doc::DocId) {
+        for candidate in &mut self.candidates {
+            if candidate.placement.document == document {
+                candidate.placement.document_closed = true;
+            }
+        }
+        if self.request_document == Some(document) && self.status.running && self.status.total > 0 {
+            self.cancel();
+        }
+    }
     /// Each own acceptance advances the common request revision, including results still arriving.
     pub fn accepted_revision(&mut self, document: photocraft_doc::DocId, revision: u64) {
         if self.request_document == Some(document) {
@@ -134,7 +151,7 @@ impl Generation {
         }
         settings.validate()?;
         let token = self.token.clone();
-        self.spawn("Testing connection", 0, move |send, _cancel| {
+        self.spawn("Testing connection", 0, move |send, _cancel, _pending| {
             let mut client = super::invoke::InvokeClient::new(&settings, token)?;
             let message = client.health()?;
             send.send(Event::Message(message, None)).map_err(|_| AiError::Cancelled)?;
@@ -171,8 +188,11 @@ impl Generation {
         let id = self.next_id - u64::from(count) + 1;
         self.request_document = Some(doc.id);
         self.expected_revision = Some(revision);
-        self.spawn("Preparing request", count, move |send, cancel| {
+        self.spawn("Preparing request", count, move |send, cancel, pending| {
             let prepared = super::images::prepare(&doc, revision, active, &request, &workflow, settings.context_padding)?;
+            // The crop and placement own everything needed for inference. Release source tiles
+            // before network waits so later editor writes do not retain a whole old document.
+            drop(doc);
             let mut backend = super::invoke::InvokeClient::new(&settings, token)?;
             backend.health()?;
             generate_sequence(
@@ -183,6 +203,7 @@ impl Generation {
                 id,
                 settings.job_timeout_secs,
                 &cancel,
+                &pending,
                 |message, item| {
                     let _ = send.send(Event::Message(message, item));
                 },
@@ -203,19 +224,26 @@ impl Generation {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn spawn(&mut self, label: &str, total: u32, run: impl FnOnce(mpsc::Sender<Event>, Arc<AtomicBool>) -> AiResult<()> + Send + 'static) -> AiResult<()> {
+    fn spawn(
+        &mut self,
+        label: &str,
+        total: u32,
+        run: impl FnOnce(mpsc::Sender<Event>, Arc<AtomicBool>, Arc<AtomicBool>) -> AiResult<()> + Send + 'static,
+    ) -> AiResult<()> {
         let (sender, receiver) = mpsc::channel();
         let cancel = Arc::new(AtomicBool::new(false));
         let flag = cancel.clone();
+        let cancel_pending = Arc::new(AtomicBool::new(false));
+        let pending = cancel_pending.clone();
         std::thread::Builder::new()
             .name("photocraft-ai".into())
             .spawn(move || {
-                let result = run(sender.clone(), flag);
+                let result = run(sender.clone(), flag, pending);
                 let _ = sender.send(Event::Finished(result));
             })
             .map_err(|e| AiError::Backend(format!("cannot start AI worker: {e}")))?;
         self.status = Status { running: true, message: label.into(), total, ..Default::default() };
-        self.worker = Some(Worker { receiver, cancel });
+        self.worker = Some(Worker { receiver, cancel, cancel_pending });
         Ok(())
     }
 }
@@ -230,6 +258,7 @@ pub fn generate_sequence(
     first_id: u64,
     timeout_secs: u64,
     cancel: &AtomicBool,
+    pending: &AtomicBool,
     mut progress: impl FnMut(String, Option<u64>),
     mut emit: impl FnMut(Candidate) -> AiResult<()>,
 ) -> AiResult<()> {
@@ -240,6 +269,9 @@ pub fn generate_sequence(
     }
     if cancel.load(Ordering::Relaxed) {
         return Err(AiError::Cancelled);
+    }
+    if pending.load(Ordering::Relaxed) {
+        return Err(AiError::PendingCancelled);
     }
     backend.validate_graph(workflow)?;
     let mut images = BTreeMap::new();
@@ -256,6 +288,9 @@ pub fn generate_sequence(
     for n in 0..count {
         if cancel.load(Ordering::Relaxed) {
             return Err(AiError::Cancelled);
+        }
+        if pending.load(Ordering::Relaxed) {
+            return Err(AiError::PendingCancelled);
         }
         let id = first_id.checked_add(u64::from(n)).ok_or_else(|| AiError::Invalid("candidate identifier overflow".into()))?;
         let mut variation = request.clone();
@@ -286,13 +321,12 @@ pub fn generate(
     let check = || if cancel.load(Ordering::Relaxed) { Err(AiError::Cancelled) } else { Ok(()) };
     check()?;
     backend.validate_graph(workflow)?;
-    let seed = request.seed.unwrap_or_else(random_seed);
-    let mut values = BTreeMap::from([
-        ("prompt".into(), json!(request.prompt)),
-        ("seed".into(), json!(seed)),
-        ("width".into(), json!(prepared.width)),
-        ("height".into(), json!(prepared.height)),
-    ]);
+    let seed = workflow.bindings.contains_key("seed").then(|| request.seed.unwrap_or_else(random_seed));
+    let mut values =
+        BTreeMap::from([("prompt".into(), json!(request.prompt)), ("width".into(), json!(prepared.width)), ("height".into(), json!(prepared.height))]);
+    if let Some(seed) = seed {
+        values.insert("seed".into(), json!(seed));
+    }
     for (key, value) in
         [("steps", request.steps.map(|v| json!(v))), ("guidance", request.guidance.map(|v| json!(v))), ("strength", request.strength.map(|v| json!(v)))]
     {
@@ -339,10 +373,10 @@ pub fn generate(
                         id,
                         placement: prepared.placement,
                         image,
-                        metadata: json!({"prompt": request.prompt, "seed": seed, "workflow": workflow.name, "request": request, "parameters": values, "graph": graph, "remoteItem": job}),
+                        metadata: json!({"prompt": request.prompt, "seed": seed, "workflow": workflow.name, "request": request, "parameters": values, "graph": graph, "remoteItem": job, "imageName": name}),
                     });
                 }
-                JobStatus::Failed(reason) => return Err(AiError::Backend(reason)),
+                JobStatus::Failed(reason) => return Err(AiError::Backend(format!("item {job}: {reason}"))),
                 JobStatus::Cancelled => return Err(AiError::Cancelled),
                 JobStatus::Pending => progress("Waiting in InvokeAI queue".into(), Some(job)),
                 JobStatus::Running { completed_nodes, total_nodes } => {

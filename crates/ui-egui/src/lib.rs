@@ -20,6 +20,7 @@ pub mod adjust_editors;
 pub mod adjust_preview;
 pub mod adjust_ui;
 mod alt_grab;
+pub mod ai_ui;
 pub mod analysis_ui;
 pub mod artboard_ui;
 pub(crate) mod blend_preview;
@@ -561,6 +562,8 @@ pub struct PhotocraftApp {
     pub background_jobs: bool,
     /// Background job bookkeeping: opening tabs, control replies waiting on a job.
     pub jobs: jobs_ui::JobsUi,
+    /// Cached candidate thumbnails; no document pixels are changed by previews.
+    pub ai_previews: ai_ui::Previews,
     #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
     live_tokens: theme::live::LiveTokens,
 }
@@ -664,6 +667,7 @@ impl PhotocraftApp {
             stylus: Default::default(),
             background_jobs: false,
             jobs: Default::default(),
+            ai_previews: Default::default(),
             #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
             live_tokens: theme::live::LiveTokens::from_env(),
         };
@@ -1258,6 +1262,9 @@ impl eframe::App for PhotocraftApp {
             filter_preview_worker::discard_closed(self);
             shortcuts::handle(self, ctx);
         }
+        jobs_ui::tick(self, ctx);
+        ai_ui::tick(self, ctx);
+        shortcuts::handle(self, ctx);
         let arrived: Vec<(String, Vec<u8>)> =
             self.services.inbox.as_ref().map(|q| std::mem::take(&mut *q.lock().unwrap_or_else(|e| e.into_inner()))).unwrap_or_default();
         for (name, bytes) in arrived {
@@ -1370,6 +1377,7 @@ impl eframe::App for PhotocraftApp {
         palette::show(self, &ctx);
         dialogs::show(self, &ctx);
         jobs_ui::dialog(self, &ctx);
+        ai_ui::window(self, &ctx);
         discard_ui::show(self, &ctx);
         tiff_options_ui::show(self, &ctx);
         distort_ui::show(self, &ctx);

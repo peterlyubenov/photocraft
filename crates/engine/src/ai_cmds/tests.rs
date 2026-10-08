@@ -37,6 +37,13 @@ fn graph_binding_and_validation() {
     w.bindings.insert("bad".into(), vec!["/nodes/out/type".into()]);
     assert!(w.validate().is_err());
     assert!(serde_json::from_value::<Workflow>(json!({"nodes":[]})).is_err());
+    let mut w = workflow();
+    w.graph["nodes"]["upstream"] = w.graph["nodes"]["out"].clone();
+    w.graph["nodes"]["upstream"]["id"] = json!("upstream");
+    w.graph["nodes"]["out"]["images"] = json!([{"image_name":"source.png"}]);
+    w.bindings.insert("reference".into(), vec!["/nodes/out/images/0".into()]);
+    w.graph["edges"] = json!([{"source":{"node_id":"upstream","field":"image"},"destination":{"node_id":"out","field":"images"}}]);
+    assert!(w.validate().unwrap_err().to_string().contains("overridden"));
 }
 #[test]
 fn insertion_undo_redo_depth_and_stale_identity() {
@@ -67,6 +74,22 @@ fn insertion_undo_redo_depth_and_stale_identity() {
     assert_eq!(s.active().unwrap().doc.layers.len(), 0);
 }
 #[test]
+fn generated_white_round_trips_through_document_colour_modes_and_depths() {
+    for mode in [ColorMode::Rgb, ColorMode::Grayscale, ColorMode::Cmyk, ColorMode::Lab] {
+        for depth in [SampleType::U8, SampleType::U16, SampleType::F32] {
+            let mut s = Session::new();
+            s.add_document(Document::new("Colour test", Size::new(32, 32), mode, depth), None);
+            s.ai.candidates.push(candidate(&s));
+            s.execute("ai.accept", json!({"id":1})).unwrap();
+            let doc = &s.active().unwrap().doc;
+            assert_eq!(doc.layers[0].surface().unwrap().format(), doc.pixel_format());
+            let rendered = photocraft_compose::render(doc, photocraft_geom::Rect::from_xywh(0, 0, 1, 1));
+            assert!(rendered.px[0].iter().all(|v| v.is_finite() && *v > 0.95), "{mode:?} {depth:?}: {:?}", rendered.px[0]);
+            assert!(s.undo());
+        }
+    }
+}
+#[test]
 fn settings_persist_and_discard_does_not_edit() {
     let mut s = session(SampleType::U8);
     let settings = Settings { server_url: "http://127.0.0.1:9999".into(), workflows: vec![workflow()], ..Default::default() };
@@ -90,6 +113,8 @@ fn malformed_params_and_corrupted_images_are_errors() {
         }
     }
     assert!(s.execute("ai.configure", json!({"settings":{"serverUrl":"file:///tmp/server"}})).is_err());
+    assert!(s.execute("ai.cancel", json!({"pendingOnly":"yes"})).is_err());
+    assert_eq!(s.execute("ai.cancel", json!({"pendingOnly":true})).unwrap()["pendingOnly"], true);
     assert!(decode_result(b"bad image").is_err());
     let image = Image::from_u8(2, 2, ChannelLayout::Rgba, vec![128; 16]).unwrap();
     assert_eq!(decode_result(&encode_png(&image).unwrap()).unwrap().dimensions(), (2, 2));
@@ -114,4 +139,16 @@ fn editable_mask_survives_accept_history_and_native_save() {
     assert!((s.active().unwrap().doc.layers[0].mask.as_ref().unwrap().surface.sample_channel(2, 2, 0) - 0.65).abs() < 0.0001);
     assert!(s.undo());
     assert_eq!(s.active().unwrap().doc.layers[0].mask.as_ref().unwrap().surface, mask);
+}
+
+#[test]
+fn closing_and_reopening_persisted_document_id_never_retargets_candidate() {
+    let mut s = session(SampleType::U8);
+    let original = s.active().unwrap().doc.as_ref().clone();
+    s.ai.candidates.push(candidate(&s));
+    s.close(0);
+    s.add_document(original, None);
+    assert!(s.execute("ai.accept", json!({"id":1,"allowStale":true})).is_err());
+    assert_eq!(s.active().unwrap().doc.layers.len(), 0);
+    assert!(s.ai.candidates[0].placement.document_closed);
 }

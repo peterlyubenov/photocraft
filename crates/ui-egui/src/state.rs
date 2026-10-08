@@ -911,6 +911,9 @@ pub struct UiState {
     /// Character/Paragraph Styles, Glyphs and Check Spelling (see `type_panels_ui`).
     #[serde(default)]
     pub type_panels: crate::type_panels_ui::TypePanelsUi,
+    /// Modeless local AI panel form, exposed through the existing control state.
+    #[serde(default)]
+    pub ai: crate::ai_ui::AiUi,
     /// Ruler/Count/Note tools, Measurement Log and Notes panels (see `analysis_ui`).
     #[serde(default)]
     pub analysis: crate::analysis_ui::AnalysisUi,
@@ -1023,6 +1026,7 @@ impl Default for UiState {
             layer_comp_selected: None,
             presets_ui: Default::default(),
             type_panels: Default::default(),
+            ai: Default::default(),
             analysis: Default::default(),
             timeline: Default::default(),
             slices: Default::default(),

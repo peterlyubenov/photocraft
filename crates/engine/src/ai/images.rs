@@ -17,6 +17,7 @@ use super::{
 #[derive(Clone, Debug)]
 pub struct Placement {
     pub document: DocId,
+    pub document_closed: bool,
     pub revision: u64,
     pub canvas: photocraft_doc::Size,
     pub mode: ColorMode,
@@ -163,6 +164,7 @@ pub fn prepare(
     Ok(Prepared {
         placement: Placement {
             document: doc.id,
+            document_closed: false,
             revision,
             canvas: doc.size,
             mode: doc.mode,

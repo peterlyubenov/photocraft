@@ -23,6 +23,18 @@ fn workflow() -> workflow::Workflow {
     w
 }
 #[test]
+fn large_crop_is_fitted_before_enforcing_the_model_pixel_budget() {
+    let mut w = workflow();
+    w.max_width = 1024;
+    w.max_height = 1024;
+    w.dimension_multiple = 8;
+    assert_eq!(w.dimensions(6000, 4000).unwrap(), (1024, 680));
+    assert!(w.dimensions(0, 4000).is_err());
+    assert!(w.dimensions(16384, 16384).is_err());
+    w.dimension_multiple = 0;
+    assert!(w.dimensions(6000, 4000).is_err());
+}
+#[test]
 fn cropped_padded_irregular_feathered_mask_and_original_coordinates() {
     let mut d = document();
     let mut selection = Surface::new(PixelFormat { sample: SampleType::F32, ..PixelFormat::GRAY8 });

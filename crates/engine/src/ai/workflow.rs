@@ -79,8 +79,8 @@ impl Workflow {
                 }
             }
         }
-        if self.modes.is_empty() || !self.bindings.contains_key("prompt") {
-            return Err(AiError::Invalid("workflow needs modes and a prompt binding".into()));
+        if self.modes.is_empty() || ["prompt", "width", "height"].iter().any(|key| !self.bindings.contains_key(*key)) {
+            return Err(AiError::Invalid("workflow needs modes and prompt/width/height bindings".into()));
         }
         if self.modes.iter().any(|m| *m != Mode::Generate) && !self.bindings.contains_key("reference") {
             return Err(AiError::Invalid("editing workflows need a reference binding".into()));
@@ -110,7 +110,8 @@ impl Workflow {
                     let id = destination.and_then(|v| v.get("node_id")).and_then(Value::as_str).unwrap_or("");
                     let field = destination.and_then(|v| v.get("field")).and_then(Value::as_str).unwrap_or("");
                     let escape = |s: &str| s.replace('~', "~0").replace('/', "~1");
-                    pointer == &format!("/nodes/{}/{}", escape(id), escape(field))
+                    let input = format!("/nodes/{}/{}", escape(id), escape(field));
+                    pointer == &input || pointer.starts_with(&format!("{input}/"))
                 }) {
                     return Err(AiError::Invalid(format!("binding {pointer} is overridden by an incoming edge")));
                 }
@@ -120,14 +121,20 @@ impl Workflow {
     }
 
     pub fn dimensions(&self, width: u32, height: u32) -> AiResult<(u32, u32)> {
-        check_size(width, height)?;
+        self.validate()?;
+        // Input crops may exceed the model budget; fit them before checking model pixels.
+        if width == 0 || height == 0 || width > 16384 || height > 16384 || u64::from(width) * u64::from(height) > 67_108_864 {
+            return Err(AiError::Invalid("input dimensions exceed the 64 MP / 16384 pixel crop limit".into()));
+        }
         let factor = (self.max_width as f64 / width as f64).min(self.max_height as f64 / height as f64).min(1.0);
         let fit = |n: u32, max: u32| {
             ((n as f64 * factor) as u32 / self.dimension_multiple * self.dimension_multiple)
                 .max(self.dimension_multiple)
                 .min(max / self.dimension_multiple * self.dimension_multiple)
         };
-        Ok((fit(width, self.max_width), fit(height, self.max_height)))
+        let size = (fit(width, self.max_width), fit(height, self.max_height));
+        check_size(size.0, size.1)?;
+        Ok(size)
     }
 
     pub fn bind(&self, values: &BTreeMap<String, Value>) -> AiResult<Value> {

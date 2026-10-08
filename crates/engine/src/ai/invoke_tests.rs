@@ -64,6 +64,54 @@ fn server(responses: Vec<Response>) -> (Settings, std::thread::JoinHandle<Vec<St
     (Settings { server_url: format!("http://{address}"), ..Default::default() }, handle)
 }
 #[test]
+fn asynchronous_command_mock_transport_and_stale_acceptance_work_together() {
+    let image = photocraft_codecs::Image::from_u8(8, 8, photocraft_codecs::ChannelLayout::Rgb, vec![127; 8 * 8 * 3]).unwrap();
+    let mut script = health();
+    script.extend([
+        response("POST /api/v1/queue/default/enqueue_batch", json!({"enqueued":1,"item_ids":[7]})),
+        response("GET /api/v1/queue/default/i/7", json!({"status":"completed","session":{"results":{"out":{"image":{"image_name":"result.png"}}}}})),
+        Response { path: "GET /api/v1/images/i/result.png/full", status: 200, body: images::encode_png(&image).unwrap() },
+    ]);
+    let (mut settings, handle) = server(script);
+    settings.workflows.push(crate::ai_cmds::tests::workflow());
+    let mut session = crate::Session::new();
+    session.add_document(
+        photocraft_doc::Document::new("test", photocraft_doc::Size::new(32, 32), photocraft_color::ColorMode::Rgb, photocraft_color::SampleType::U16),
+        None,
+    );
+    session.execute("ai.configure", json!({"settings":settings})).unwrap();
+    session.execute("ai.generate", json!({"prompt":"test","width":8,"height":8})).unwrap();
+    assert!(session.ai.status.running);
+    // Editing remains available while the worker owns its original immutable request.
+    session
+        .edit("Change selection", |doc, _| {
+            let mut mask = photocraft_raster::Surface::new(photocraft_color::PixelFormat::GRAY8);
+            mask.write_pixel(5, 5, &[1.0]);
+            doc.selection = Some(mask);
+            Ok(())
+        })
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while session.ai.status.running && std::time::Instant::now() < deadline {
+        session.ai.tick();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(!session.ai.status.running, "{}", session.ai.status.message);
+    assert_eq!(session.ai.candidates.len(), 1, "{}", session.ai.status.message);
+    assert_eq!(session.active().unwrap().doc.layers.len(), 0);
+    assert!(session.ai.candidates[0].placement.mask.is_none());
+    let id = session.ai.candidates[0].id;
+    assert!(session.execute("ai.accept", json!({"id":id})).is_err());
+    session.execute("ai.accept", json!({"id":id,"allowStale":true})).unwrap();
+    assert!(session.active().unwrap().doc.layers[0].mask.is_none());
+    assert!(session.undo());
+    assert_eq!(session.active().unwrap().doc.layers.len(), 0);
+    let requests = handle.join().unwrap();
+    assert_eq!(requests.len(), 6);
+    assert!(!requests.iter().any(|r| r.starts_with("POST /api/v1/images/upload")));
+    assert!(requests[3].contains("\"runs\":1"));
+}
+#[test]
 fn transport_submission_result_auth_upload_and_cancel() {
     let mut script = health();
     script.extend([

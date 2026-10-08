@@ -17,11 +17,14 @@ fn cancelled_late_results_and_arrival_after_own_acceptance() {
     let (sender, receiver) = mpsc::channel();
     let flag = Arc::new(AtomicBool::new(false));
     let mut queue = Generation::default();
-    queue.worker = Some(Worker { receiver, cancel: flag.clone() });
+    queue.worker = Some(Worker { receiver, cancel: flag.clone(), cancel_pending: Arc::new(AtomicBool::new(false)) });
     queue.request_document = Some(doc.id);
     queue.expected_revision = Some(1);
     queue.status.running = true;
     queue.accepted_revision(doc.id, 3);
+    queue.cancel_pending();
+    assert!(queue.worker.as_ref().unwrap().cancel_pending.load(Ordering::Relaxed));
+    assert!(!flag.load(Ordering::Relaxed));
     sender.send(Event::Candidate(Box::new(make()))).unwrap();
     queue.tick();
     assert_eq!(queue.candidates[0].placement.revision, 3);

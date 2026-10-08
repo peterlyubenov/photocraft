@@ -16,6 +16,8 @@ pub enum AiError {
     Backend(String),
     #[error("AI generation cancelled")]
     Cancelled,
+    #[error("Remaining AI jobs cancelled; completed candidates are retained")]
+    PendingCancelled,
     #[error("AI generation timed out; check InvokeAI's queue and increase the job timeout")]
     Timeout,
     #[error("local InvokeAI is unavailable in the web build")]
@@ -94,7 +96,7 @@ impl Settings {
         Ok(())
     }
 }
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct Request {
     pub prompt: String,
@@ -158,3 +160,5 @@ mod images_tests;
 mod invoke_tests;
 #[cfg(test)]
 mod queue_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod smoke_tests;

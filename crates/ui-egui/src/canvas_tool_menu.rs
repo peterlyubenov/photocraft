@@ -38,6 +38,7 @@ pub const TRANSFORM_MENU: &[Row] = &[
 /// Fill row has no PhotoCraft command and is left out. Rows stay visible and grey out exactly like
 /// their menu-bar twins.
 pub const SELECTION_MENU: &[Row] = &[
+    Some(("AI Generation", "window.aiGeneration")),
     Some(("Deselect", "select.deselect")),
     Some(("Select Inverse", "select.inverse")),
     Some(("Feather…", "select.modify.feather")),
@@ -424,6 +425,7 @@ mod tests {
         assert_eq!(
             labels(SELECTION_MENU),
             vec![
+                Some("AI Generation"),
                 Some("Deselect"),
                 Some("Select Inverse"),
                 Some("Feather…"),

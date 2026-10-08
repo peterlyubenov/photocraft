@@ -52,6 +52,7 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("view.rotateView", "Rotate View", &[], None),
     ("view.resetView", "Reset View", &["View"], None),
     ("window.newWindowForDocument", "New Window for Document", &["Window", "Arrange"], None),
+    ("window.aiGeneration", "AI Generation", &["Window"], None),
     ("window.toggle.layers", "Layers", &["Window"], Some("F7")),
     ("window.toggle.history", "History", &["Window"], None),
     ("window.toggle.properties", "Properties", &["Window"], None),
@@ -186,6 +187,9 @@ pub(crate) fn invoke_unguarded(app: &mut PhotocraftApp, ctx: &egui::Context, id:
     // Filter › Plug-ins (installed WebAssembly plug-ins, Install Plug-in…).
     if let Some(r) = crate::plugin_ui::menu(app, id, &params) {
         return r;
+    }
+    if id == "window.aiGeneration" {
+        return crate::ai_ui::menu(app, &params);
     }
     if id == "window.panel.brushes" {
         // Window › Brushes opens the Brush Settings window on its presets tab.
@@ -564,7 +568,7 @@ pub fn is_enabled(app: &PhotocraftApp, id: &str) -> bool {
         return e;
     }
     match id {
-        "file.open" | "file.exit" | "file.clearRecent" | "help.about" | "help.systemInfo" | "edit.search" => true,
+        "file.open" | "file.exit" | "file.clearRecent" | "help.about" | "help.systemInfo" | "edit.search" | "window.aiGeneration" => true,
         i if i.starts_with("file.openRecent.") => true,
         i if crate::links::url_for(i).is_some() => true,
         i if i.starts_with("window.theme.") => true,
@@ -682,6 +686,7 @@ fn checked(app: &PhotocraftApp, id: &str) -> Option<bool> {
     }
     let p = &app.ui.panels;
     Some(match id {
+        "window.aiGeneration" => app.ui.ai.open,
         "window.toggle.layers" => p.layers,
         "window.toggle.history" => p.history,
         "window.toggle.properties" => p.properties,
