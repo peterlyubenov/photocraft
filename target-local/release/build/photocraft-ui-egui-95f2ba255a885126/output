@@ -1,0 +1,2 @@
+cargo::rerun-if-changed=/home/peter/Projects/photocraft/crates/ui-egui/../../contributors/contributors.json
+cargo::rerun-if-changed=/home/peter/Projects/photocraft/crates/ui-egui/../../contributors/people.toml

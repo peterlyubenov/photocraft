@@ -1,0 +1,1 @@
+cargo:rustc-env=MIME_TYPES_GENERATED_PATH=/home/peter/Projects/photocraft/target-local/release/build/mime_guess-88b4cbe60ef66414/out/mime_types_generated.rs

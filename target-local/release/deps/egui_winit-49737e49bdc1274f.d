@@ -1,0 +1,11 @@
+/home/peter/Projects/photocraft/target-local/release/deps/egui_winit-49737e49bdc1274f.d: /home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-winit-0.36.2/src/lib.rs /home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-winit-0.36.2/src/clipboard.rs /home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-winit-0.36.2/src/dropped_file.rs /home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-winit-0.36.2/src/safe_area.rs /home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-winit-0.36.2/src/window_settings.rs
+
+/home/peter/Projects/photocraft/target-local/release/deps/libegui_winit-49737e49bdc1274f.rlib: /home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-winit-0.36.2/src/lib.rs /home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-winit-0.36.2/src/clipboard.rs /home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-winit-0.36.2/src/dropped_file.rs /home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-winit-0.36.2/src/safe_area.rs /home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-winit-0.36.2/src/window_settings.rs
+
+/home/peter/Projects/photocraft/target-local/release/deps/libegui_winit-49737e49bdc1274f.rmeta: /home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-winit-0.36.2/src/lib.rs /home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-winit-0.36.2/src/clipboard.rs /home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-winit-0.36.2/src/dropped_file.rs /home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-winit-0.36.2/src/safe_area.rs /home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-winit-0.36.2/src/window_settings.rs
+
+/home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-winit-0.36.2/src/lib.rs:
+/home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-winit-0.36.2/src/clipboard.rs:
+/home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-winit-0.36.2/src/dropped_file.rs:
+/home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-winit-0.36.2/src/safe_area.rs:
+/home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-winit-0.36.2/src/window_settings.rs:

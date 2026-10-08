@@ -1,0 +1,11 @@
+/home/peter/Projects/photocraft/target-local/release/deps/io_lifetimes-8da978dc2aeb3f2a.d: /home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/io-lifetimes-3.0.1/src/lib.rs /home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/io-lifetimes-3.0.1/src/portability.rs /home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/io-lifetimes-3.0.1/src/traits.rs /home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/io-lifetimes-3.0.1/src/raw.rs /home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/io-lifetimes-3.0.1/src/views.rs
+
+/home/peter/Projects/photocraft/target-local/release/deps/libio_lifetimes-8da978dc2aeb3f2a.rlib: /home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/io-lifetimes-3.0.1/src/lib.rs /home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/io-lifetimes-3.0.1/src/portability.rs /home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/io-lifetimes-3.0.1/src/traits.rs /home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/io-lifetimes-3.0.1/src/raw.rs /home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/io-lifetimes-3.0.1/src/views.rs
+
+/home/peter/Projects/photocraft/target-local/release/deps/libio_lifetimes-8da978dc2aeb3f2a.rmeta: /home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/io-lifetimes-3.0.1/src/lib.rs /home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/io-lifetimes-3.0.1/src/portability.rs /home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/io-lifetimes-3.0.1/src/traits.rs /home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/io-lifetimes-3.0.1/src/raw.rs /home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/io-lifetimes-3.0.1/src/views.rs
+
+/home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/io-lifetimes-3.0.1/src/lib.rs:
+/home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/io-lifetimes-3.0.1/src/portability.rs:
+/home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/io-lifetimes-3.0.1/src/traits.rs:
+/home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/io-lifetimes-3.0.1/src/raw.rs:
+/home/peter/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/io-lifetimes-3.0.1/src/views.rs:

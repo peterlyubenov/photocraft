@@ -1,0 +1,3 @@
+cargo:rerun-if-changed=build.rs
+cargo:rerun-if-changed=../../assets/app-icon/photocraft.ico
+cargo:rerun-if-env-changed=PHOTOCRAFT_REQUIRE_WINRES

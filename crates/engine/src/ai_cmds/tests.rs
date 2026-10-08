@@ -1,0 +1,96 @@
+#![allow(clippy::unwrap_used)] // Synthetic test setup helpers.
+use super::*;
+use crate::ai::{
+    images::{decode_result, encode_png, prepare},
+    queue::Candidate,
+    workflow::Workflow,
+};
+use photocraft_codecs::{ChannelLayout, Image};
+use photocraft_color::{ColorMode, SampleType};
+use photocraft_doc::{Document, Size};
+
+pub(crate) fn workflow() -> Workflow {
+    serde_json::from_value(json!({"name":"Mock graph", "graph":{"id":"test", "nodes":{"out":{"id":"out","type":"mock","prompt":"","width":8,"height":8,"seed":1}},"edges":[]},"bindings":{"prompt":["/nodes/out/prompt"],"width":["/nodes/out/width"],"height":["/nodes/out/height"],"seed":["/nodes/out/seed"]}, "outputNode":"out", "modes":["generate"], "dimensionMultiple":1})).unwrap()
+}
+fn session(depth: SampleType) -> Session {
+    let mut s = Session::new();
+    s.add_document(Document::new("Test", Size::new(32, 32), ColorMode::Rgb, depth), None);
+    s
+}
+fn candidate(s: &Session) -> Candidate {
+    let st = s.active().unwrap();
+    let prepared =
+        prepare(&st.doc, st.revision, st.active_layer, &Request { prompt: "test".into(), width: 8, height: 8, ..Default::default() }, &workflow(), 0).unwrap();
+    Candidate {
+        id: 1,
+        placement: prepared.placement,
+        image: Image::from_u8(8, 8, ChannelLayout::Rgba, vec![255; 8 * 8 * 4]).unwrap(),
+        metadata: json!({"prompt":"test"}),
+    }
+}
+#[test]
+fn graph_binding_and_validation() {
+    let mut w = workflow();
+    w.validate().unwrap();
+    let graph = w.bind(&std::collections::BTreeMap::from([("prompt".into(), json!("literal prompt"))])).unwrap();
+    assert_eq!(graph.pointer("/nodes/out/prompt"), Some(&json!("literal prompt")));
+    w.bindings.insert("bad".into(), vec!["/nodes/out/type".into()]);
+    assert!(w.validate().is_err());
+    assert!(serde_json::from_value::<Workflow>(json!({"nodes":[]})).is_err());
+}
+#[test]
+fn insertion_undo_redo_depth_and_stale_identity() {
+    for depth in [SampleType::U8, SampleType::U16, SampleType::F32] {
+        let mut s = session(depth);
+        s.ai.candidates.push(candidate(&s));
+        let revision = s.active().unwrap().revision;
+        assert_eq!(s.active().unwrap().doc.layers.len(), 0);
+        let result = s.execute("ai.accept", json!({"id":1})).unwrap();
+        let l = s.active().unwrap().doc.layer(photocraft_doc::LayerId(result["layer"].as_u64().unwrap())).unwrap();
+        assert_eq!(l.surface().unwrap().format().sample, depth);
+        assert!(l.surface().unwrap().sample_channel(2, 2, 0) > 0.99);
+        assert_eq!(l.psd_blocks[0].0, *b"pcAI");
+        assert!(s.active().unwrap().revision > revision);
+        assert!(s.undo());
+        assert_eq!(s.active().unwrap().doc.layers.len(), 0);
+        assert!(s.redo());
+    }
+    let mut s = session(SampleType::U8);
+    s.ai.candidates.push(candidate(&s));
+    s.edit("changed", |_, _| Ok(())).unwrap();
+    assert!(s.execute("ai.accept", json!({"id":1})).is_err());
+    assert_eq!(s.ai.candidates.len(), 1);
+    assert!(s.execute("ai.accept", json!({"id":1,"allowStale":true})).is_ok());
+    s.ai.candidates.push(candidate(&s));
+    s.add_document(Document::new("Other", Size::new(32, 32), ColorMode::Rgb, SampleType::U8), None);
+    assert!(s.execute("ai.accept", json!({"id":1,"allowStale":true})).is_err());
+    assert_eq!(s.active().unwrap().doc.layers.len(), 0);
+}
+#[test]
+fn settings_persist_and_discard_does_not_edit() {
+    let mut s = session(SampleType::U8);
+    let settings = Settings { server_url: "http://127.0.0.1:9999".into(), workflows: vec![workflow()], ..Default::default() };
+    s.execute("ai.configure", json!({"settings":settings,"token":"secret"})).unwrap();
+    let saved = s.prefs_to_json();
+    assert!(!saved.contains("secret"));
+    let mut restored = Session::new();
+    restored.load_prefs_json(&saved).unwrap();
+    assert_eq!(restored.prefs().ai, settings);
+    s.ai.candidates.push(candidate(&s));
+    let revision = s.active().unwrap().revision;
+    s.execute("ai.discard", json!({"id":1})).unwrap();
+    assert_eq!(s.active().unwrap().revision, revision);
+}
+#[test]
+fn malformed_params_and_corrupted_images_are_errors() {
+    let mut s = session(SampleType::U8);
+    for command in ["ai.accept", "ai.discard", "ai.generate"] {
+        for params in [Value::Null, json!({}), json!({"id":-1,"width":u64::MAX})] {
+            assert!(s.execute(command, params).is_err());
+        }
+    }
+    assert!(s.execute("ai.configure", json!({"settings":{"serverUrl":"file:///tmp/server"}})).is_err());
+    assert!(decode_result(b"bad image").is_err());
+    let image = Image::from_u8(2, 2, ChannelLayout::Rgba, vec![128; 16]).unwrap();
+    assert_eq!(decode_result(&encode_png(&image).unwrap()).unwrap().dimensions(), (2, 2));
+}
