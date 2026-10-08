@@ -94,3 +94,24 @@ fn malformed_params_and_corrupted_images_are_errors() {
     let image = Image::from_u8(2, 2, ChannelLayout::Rgba, vec![128; 16]).unwrap();
     assert_eq!(decode_result(&encode_png(&image).unwrap()).unwrap().dimensions(), (2, 2));
 }
+
+#[test]
+fn editable_mask_survives_accept_history_and_native_save() {
+    let mut s = session(SampleType::U16);
+    let mut c = candidate(&s);
+    let mut mask = photocraft_raster::Surface::new(photocraft_color::PixelFormat { sample: SampleType::F32, ..photocraft_color::PixelFormat::GRAY8 });
+    mask.write_pixel(2, 2, &[0.35]);
+    c.placement.mask = Some(mask.clone());
+    s.ai.candidates.push(c);
+    let layer = s.execute("ai.accept", json!({"id":1,"maskEnabled":false})).unwrap()["layer"].as_u64().unwrap();
+    let doc = &s.active().unwrap().doc;
+    assert_eq!(doc.layer(photocraft_doc::LayerId(layer)).unwrap().mask.as_ref().unwrap().surface, mask);
+    let bytes = photocraft_format::save_to_bytes(doc, &Default::default()).unwrap();
+    let restored = photocraft_format::load_from_bytes(&bytes).unwrap();
+    assert_eq!(restored.layers[0].mask, doc.layers[0].mask);
+    assert_eq!(restored.layers[0].psd_blocks, doc.layers[0].psd_blocks);
+    s.execute("image.adjustments.invert", json!({"target":"mask","layer":layer})).unwrap();
+    assert!((s.active().unwrap().doc.layers[0].mask.as_ref().unwrap().surface.sample_channel(2, 2, 0) - 0.65).abs() < 0.0001);
+    assert!(s.undo());
+    assert_eq!(s.active().unwrap().doc.layers[0].mask.as_ref().unwrap().surface, mask);
+}

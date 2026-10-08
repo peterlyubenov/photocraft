@@ -152,6 +152,8 @@ pub enum JobStatus {
     Cancelled,
 }
 
+#[cfg(test)]
+mod images_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod invoke_tests;
 #[cfg(test)]

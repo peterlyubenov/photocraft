@@ -86,3 +86,27 @@ when needed, `PHOTOCRAFT_INVOKE_TOKEN` in your environment. No inference runs in
 - `crates/engine/src/prefs.rs`: one defaulted persistent AI settings field.
 
 No document types, image formats, compositor or history infrastructure are forked.
+
+## Selection-aware editing and maskless fill
+
+Reference source defaults to the active layer; select `mergedVisible` to composite visible layers
+without flattening the document. An active selection always restricts the reference to its bounds
+plus the configured context padding, clamped to the canvas. Empty/off-canvas selections and an
+active source with no visible selected pixels return actionable errors. With no selection, Edit
+uses the full chosen source; Generate uses no source image.
+
+The original selection coverage is retained as a floating-point editable layer mask. Irregular
+edges, antialiasing and feathered opacity are preserved. The reference travels as colour-managed
+sRGB RGBA8 PNG; original document pixels/depth are untouched. Requests are limited to 64 MP crops
+and 16 MP model images. Workflow dimension constraints resize only the cropped request, and the
+returned image maps back to the original rectangle. Explicit nonzero width/height override model
+resolution; zero/zero in editing modes derives it from the crop. Padding never expands the request
+to the whole canvas unless the padded selection actually reaches those boundaries.
+
+Maskless Fill uses a reference-edit workflow supporting `masklessFill`; it attaches the saved
+selection as a mask after generation. FLUX.2 may change every pixel in the reference crop. Unchanged
+visible pixels are preserved by PhotoCraft's original layers and the generated layer's mask.
+Accept with `maskEnabled:false` to inspect the whole candidate crop, then enable and paint its mask
+using the existing Layers panel and painting tools. Undo/redo applies to each acceptance and mask
+edit. If the document revision changed, acceptance requires an explicit `allowStale:true` review;
+changing canvas dimensions, mode, depth or ICC profile blocks acceptance entirely.
